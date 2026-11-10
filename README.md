@@ -115,6 +115,8 @@ python bench.py report results/
 2. `Permission denied` 写 configs —— AISBench 装在了只读位置；用 `aisbench.configs_dir` 指向可写副本，或用 `pip install -e` 的源码环境。
 3. 命中率远低于目标 —— 先确认 `block_tokens` 与服务一致，再确认预热是否覆盖所有 DP（看 `seed_rows` 日志），最后核对 `Ext hit` 的分母。
 4. 旧版 AISBench 不认 `--num-warmups` —— 升级 AISBench；或把 `aisbench.extra_args` 里显式覆盖，但**不要**在没有 `--num-warmups 0` 的情况下测冷态，预热请求会污染结果。
+5. `ImportError: pyarrow requires NumPy 2.0 or newer` —— `ais-bench-benchmark 3.1.20260630` 的元数据把 numpy 钉在 `<2.0`，但它依赖的 pyarrow 需要 `>=2.0`。在与 vLLM 隔离的 venv 里直接 `pip install "numpy>=2"` 即可，实测 ais_bench 运行正常；不建议装在 vLLM 主环境。
+6. TPOT 一直是 `n/a` —— `output_len=1` 没有 decode 阶段，没有 TPOT 样本；要测 TPOT 请把 `output_len` 调大。
 
 ## 本地检查
 
