@@ -112,6 +112,13 @@ class DatasetTests(unittest.TestCase):
         heads = {row[: built.prefix_tokens] for row in built.full_rows}
         self.assertEqual(len(heads), 2)
 
+    def test_seed_changes_prefixes(self):
+        tok = FakeTokenizer()
+        case = Case(1024, 1, 0.5, 4, 4)
+        first = dataset.build_dataset(tok, ["abcdefghij", "klmnopqrst"], case, 128, seed=1)
+        second = dataset.build_dataset(tok, ["abcdefghij", "klmnopqrst"], case, 128, seed=2)
+        self.assertNotEqual(first.prefix_rows, second.prefix_rows)
+
     def test_tails_are_unique(self):
         tok = FakeTokenizer()
         case = Case(512, 1, 0.5, 3, 4, prefix_num=1)
@@ -139,6 +146,13 @@ class MetricsTests(unittest.TestCase):
         summary = metrics.hit_summary({}, {metrics.EXT_QUERIES: 0.0, metrics.EXT_HITS: 0.0})
         self.assertIsNone(summary["external_hit_rate"])
 
+    def test_counter_reset_is_flagged(self):
+        before = {metrics.EXT_QUERIES: 500.0, metrics.EXT_HITS: 400.0}
+        after = {metrics.EXT_QUERIES: 10.0, metrics.EXT_HITS: 5.0}
+        summary = metrics.hit_summary(before, after)
+        self.assertTrue(summary["counter_reset"])
+        self.assertIsNone(summary["external_hit_rate"])
+
     def test_parse_prometheus_lines(self):
         text = (
             "# HELP vllm:prefix_cache_hits_total hits\n"
@@ -152,6 +166,28 @@ class MetricsTests(unittest.TestCase):
             name = line.split("{", 1)[0].split(" ", 1)[0]
             values[name] = values.get(name, 0.0) + float(line.rsplit(" ", 1)[1])
         self.assertEqual(values["vllm:prefix_cache_hits_total"], 20.0)
+
+
+class ValidationTests(unittest.TestCase):
+    def test_failed_requests_rejected(self):
+        from abpb import runner
+
+        perf = {"requests_ok": 15, "requests_failed": 1}
+        with self.assertRaises(Exception):
+            runner._check(perf, 16, 1, "measure")
+
+    def test_missing_counts_rejected(self):
+        from abpb import runner
+
+        with self.assertRaises(Exception):
+            runner._check({"ttft": 10.0}, 16, 1, "measure")
+
+    def test_short_output_rejected(self):
+        from abpb import runner
+
+        perf = {"requests_ok": 2, "requests_failed": 0, "output_tokens": 4}
+        with self.assertRaises(Exception):
+            runner._check(perf, 2, 512, "measure")
 
 
 class ReportingTests(unittest.TestCase):

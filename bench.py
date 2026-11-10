@@ -7,8 +7,30 @@ import argparse
 import os
 import sys
 
+try:
+    import fcntl
+except ImportError:  # Windows: no advisory locking, runs must not overlap by hand
+    fcntl = None
+
 from abpb import reporting, runner
 from abpb.config import ConfigError, load_config
+
+
+def _acquire_lock(work_dir: str):
+    """Two runs share AISBench's config filenames, so they must not overlap."""
+    if fcntl is None:
+        return None
+    os.makedirs(work_dir, exist_ok=True)
+    handle = open(os.path.join(work_dir, ".abpb.lock"), "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        raise ConfigError(
+            f"another run holds {os.path.join(work_dir, '.abpb.lock')}; "
+            "wait for it to finish or use a different work_dir"
+        )
+    return handle
 
 
 def cmd_run(args) -> int:
@@ -19,6 +41,14 @@ def cmd_run(args) -> int:
         return 2
     if args.results_dir:
         config.results_dir = os.path.abspath(args.results_dir)
+
+    lock = None
+    if not args.dry_run:
+        try:
+            lock = _acquire_lock(config.work_dir)
+        except ConfigError as exc:
+            print(f"lock error: {exc}", file=sys.stderr)
+            return 2
 
     results = runner.run_all(config, log=print, dry_run=args.dry_run)
     if args.dry_run or not results:

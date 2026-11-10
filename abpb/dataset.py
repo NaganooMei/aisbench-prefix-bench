@@ -103,16 +103,19 @@ class CaseDataset:
     seed: int
 
 
-def _prefix_source(corpus: list[str], index: int) -> str:
+def _prefix_source(corpus: list[str], index: int, seed: int) -> str:
     """Pick filler text so that per-request prefixes stay distinct.
 
     Beyond the corpus size the plain ``index % len`` cycle would hand two
     requests the same prefix; pairing two entries extends the period to n^2.
+    The seed shifts the starting point so separate runs do not all reuse the
+    previous run's cached prefixes.
     """
     size = len(corpus)
+    slot = (index + seed) % size
     if index < size:
-        return corpus[index]
-    return corpus[index % size] + " " + corpus[(index // size) % size]
+        return corpus[slot]
+    return corpus[slot] + " " + corpus[(slot + 1 + index // size) % size]
 
 
 def build_dataset(
@@ -132,7 +135,7 @@ def build_dataset(
     rng = random.Random(seed)
     groups = case.prefix_groups()
     prefixes = [
-        fit_tokens(tokenizer, _prefix_source(corpus, index), prefix_tokens)
+        fit_tokens(tokenizer, _prefix_source(corpus, index, seed), prefix_tokens)
         for index in range(groups)
     ]
     suffixes = [

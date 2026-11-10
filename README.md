@@ -35,7 +35,10 @@
 
 - 预埋和预热都**按 DP 定向**：通过 `X-data-parallel-rank` 头把请求钉到指定 rank，每个 DP 都收到完整的前缀集合，不靠内部 LB 碰运气。
 - 预热在每个 mode 开始前各做一次（HBM 不 reset，cache 清 HBM，posix-reset 清 HBM+UCM），因为三种模式的 load 路径不同。
-- 预热数据使用独立 seed，不进汇总表；参数可在 `warmup` 里覆盖（默认 8K 输入、4 请求、4 并发、90% 命中、输出 1 token）。
+- 预热数据使用独立 seed，不进汇总表；参数可在 `warmup` 里覆盖（默认 8K 输入、4 请求、4 并发、90% 命中、输出 1 token）。预热失败默认跳过该 mode，`warmup_on_failure: "continue"` 可改为硬着头皮跑。
+- **每个 mode 用不同的 seed 建数据**（seed 由 case seed 与 mode 名混合），前缀和后缀都会变。否则上一个 mode 测过的**全长**输入会留在 UCM Cache / Posix 里，下一个 mode 重新预埋 90% 也删不掉它，实测会变成接近 100% 命中。
+- 每次预埋和测量后都会校验 `requests_ok / requests_failed`；有失败或条数不符直接报错，不会出 `ok` 行。`output_len > 1` 时还会校验输出 token 数。
+- 同一 `work_dir` 有文件锁，两个进程不会同时改 AISBench 的配置文件。
 
 ## 三种模式
 
@@ -111,6 +114,11 @@ svc-a        posix-reset  8K     89%     0.0%     97.8%    129,024  2,881       
 - `Ext hit`：`vllm:external_prefix_cache_hits / queries` 增量，即 UCM/SGLang HiCache 等外部缓存贡献的命中；**分母是扣除 HBM 命中后剩余的 token**，所以它和 `HBM hit` 不能直接相加。
 - `Hit tok` / `Prefill tok`：跨模式对比只看这两列——命中 token 绝对量和仍然需要重算的 token 数。
 - `Load GB/s`：`ucm:cache_load_bytes_total` 与 `ucm:cache_load_duration_ms_sum` 折算的加载带宽，缺指标时显示 `n/a`。
+
+两个口径细节：
+
+- `Ext hit` 的分母是"扣掉 HBM 命中后剩余的 token"，不是总查询量，所以它天然比 `HBM hit` 显得高；要比跨模式就看 `Hit tok` / `Prefill tok`。
+- 计数窗口内如果计数器回退（服务重启），或读到的 `model_name` 标签与本服务不符，命中率会直接显示 `n/a` 而不是给出负数或混算的结果。
 
 每个格子还会落盘 `case_result.json`（配置、seed、reset 结果、性能与命中增量、错误），`results/summary.csv` 是汇总表。重新出表：
 

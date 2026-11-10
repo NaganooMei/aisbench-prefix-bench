@@ -29,14 +29,22 @@ def _get(url: str, timeout: float) -> str:
         return response.read().decode("utf-8", "replace")
 
 
-def scrape(base_url: str, timeout: float = 10.0) -> dict[str, float]:
-    """Sum every counter/gauge by metric name across labels."""
+def scrape(base_url: str, timeout: float = 10.0, model_name: str = "") -> dict[str, float]:
+    """Sum every counter/gauge by metric name across labels.
+
+    When several models share one endpoint, ``model_name`` keeps only the labels
+    that belong to the service under test; otherwise their counters mix.
+    """
     text = _get(f"{base_url}/metrics", timeout)
     values: dict[str, float] = {}
     for line in text.splitlines():
         if not line or line.startswith("#"):
             continue
         name = line.split("{", 1)[0].split(" ", 1)[0]
+        if model_name and 'model_name="' in line:
+            label = line.split('model_name="', 1)[1].split('"', 1)[0]
+            if label != model_name:
+                continue
         try:
             value = float(line.rsplit(" ", 1)[1])
         except (IndexError, ValueError):
@@ -58,6 +66,11 @@ def hit_summary(before: dict[str, float], after: dict[str, float]) -> dict:
     hbm_h = delta(before, after, HBM_HITS)
     ext_q = delta(before, after, EXT_QUERIES)
     ext_h = delta(before, after, EXT_HITS)
+    # A restart resets counters; a negative delta means the window is unusable
+    # rather than a real hit rate.
+    reset = any(v is not None and v < 0 for v in (hbm_q, hbm_h, ext_q, ext_h))
+    if reset:
+        hbm_q = hbm_h = ext_q = ext_h = None
     load_bytes = delta(before, after, UCM_LOAD_BYTES)
     load_ms = delta(before, after, UCM_LOAD_MS)
     load_tasks = delta(before, after, UCM_LOAD_TASKS)
@@ -68,6 +81,7 @@ def hit_summary(before: dict[str, float], after: dict[str, float]) -> dict:
         return hits / queries
 
     return {
+        "counter_reset": reset,
         "hbm_hit_rate": rate(hbm_h, hbm_q),
         "hbm_hits": hbm_h,
         "hbm_queries": hbm_q,
