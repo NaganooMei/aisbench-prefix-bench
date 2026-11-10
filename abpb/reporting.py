@@ -13,6 +13,8 @@ HEADERS = (
     "Target",
     "HBM hit",
     "Ext hit",
+    "Hit tok",
+    "Prefill tok",
     "TTFT ms",
     "TPOT ms",
     "Out tok/s",
@@ -20,6 +22,22 @@ HEADERS = (
     "Load GB/s",
     "Status",
 )
+
+
+def _hit_tokens(hits: dict) -> float | None:
+    hbm = hits.get("hbm_hits")
+    external = hits.get("external_hits")
+    if hbm is None and external is None:
+        return None
+    return (hbm or 0.0) + (external or 0.0)
+
+
+def _prefill_tokens(perf: dict, hits: dict) -> float | None:
+    cached = _hit_tokens(hits)
+    total = perf.get("input_tokens")
+    if cached is None or total is None:
+        return None
+    return max(total - cached, 0.0)
 
 
 def _rate(value) -> str:
@@ -53,6 +71,8 @@ def row_for(result) -> list[str]:
         f"{result.target_hit * 100:.0f}%",
         _rate(hits.get("hbm_hit_rate")),
         _rate(hits.get("external_hit_rate")),
+        _num(_hit_tokens(hits), 0),
+        _num(_prefill_tokens(perf, hits), 0),
         _num(perf.get("ttft")),
         _num(perf.get("tpot")),
         _num(perf.get("output_throughput")),

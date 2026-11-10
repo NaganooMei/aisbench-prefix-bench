@@ -15,12 +15,12 @@ MODEL_ABBR = "abpb_model"
 DATASET_ABBR = "abpb_gsm8k_perf"
 
 MODEL_TEMPLATE = '''\
-from ais_bench.benchmark.models import VLLMCustomAPIChat
+from ais_bench.benchmark.models import VLLMCustomAPIChatStream
 
 models = [
     dict(
         attr="service",
-        type=VLLMCustomAPIChat,
+        type=VLLMCustomAPIChatStream,
         abbr="{abbr}",
         path="{tokenizer}",
         model="{served_model}",
@@ -167,23 +167,29 @@ def run(cmd: list[str], log_path: str, timeout_s: float) -> str:
     return stdout
 
 
-THROUGHPUT_KEYS = {
-    "ttft": ("ttft", "mean_ttft_ms"),
-    "ttft_p90": ("ttft_p90", "p90_ttft_ms"),
-    "tpot": ("tpot", "mean_tpot_ms"),
-    "e2e": ("e2e", "e2el", "mean_e2el_ms"),
-    "output_throughput": ("output_token_throughput", "output_throughput"),
-    "total_throughput": ("total_token_throughput",),
-    "request_throughput": ("request_throughput_rps", "request_throughput"),
+JSON_METRICS = {
+    "benchmark duration": "duration_ms",
+    "request throughput": "request_throughput",
+    "input token throughput": "input_throughput",
+    "output token throughput": "output_throughput",
+    "total token throughput": "total_throughput",
+    "total requests": "requests",
+    "success requests": "requests_ok",
+    "failed requests": "requests_failed",
+    "total input tokens": "input_tokens",
+    "total generated tokens": "output_tokens",
 }
 
+_NUMBER = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
 
-def _match_metric(payload: dict, names: tuple[str, ...]) -> float | None:
-    for key, value in payload.items():
-        lower = key.lower()
-        if any(name in lower for name in names):
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return float(value)
+
+def _number(value) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        match = _NUMBER.search(value)
+        if match:
+            return float(match.group(0))
     return None
 
 
@@ -192,39 +198,55 @@ def parse_results(output_dir: str) -> dict:
     candidates = []
     for root, _dirs, files in os.walk(output_dir):
         for name in files:
-            if name.endswith(".json") and DATASET_ABBR in name:
+            if name.endswith(".json") and DATASET_ABBR in name and "details" not in name:
                 candidates.append(os.path.join(root, name))
     if not candidates:
         return {}
     newest = max(candidates, key=os.path.getmtime)
     with open(newest, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
-    if not isinstance(payload, dict):
-        return {}
     metrics = {}
-    for field, names in THROUGHPUT_KEYS.items():
-        value = _match_metric(payload, names)
-        if value is not None:
-            metrics[field] = value
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            field = JSON_METRICS.get(key.strip().lower())
+            if not field:
+                continue
+            raw = value.get("total") if isinstance(value, dict) else value
+            number = _number(raw)
+            if number is not None:
+                metrics[field] = number
     metrics["source"] = newest
     return metrics
 
 
-STDOUT_RULES = (
-    ("ttft", r"TTFT[^0-9]*([0-9]+\.[0-9]+)", 1.0),
-    ("tpot", r"TPOT[^0-9]*([0-9]+\.[0-9]+)", 1.0),
-    ("output_throughput", r"Output Token Throughput[^0-9]*([0-9]+\.[0-9]+)", 1.0),
-    ("total_throughput", r"Total Token Throughput[^0-9]*([0-9]+\.[0-9]+)", 1.0),
-)
+# "│ TTFT │ total │ avg │ min │ max │ median │ P75 │ P90 │ P99 │ N │"
+TABLE_ROWS = {
+    "TTFT": "ttft",
+    "TPOT": "tpot",
+    "ITL": "itl",
+    "E2EL": "e2el",
+}
 
 
 def parse_stdout(stdout: str) -> dict:
-    """Fallback for AISBench versions that only print a summary table."""
+    """Extract Average / P90 from AISBench's performance results table."""
     metrics = {}
-    for field, pattern, scale in STDOUT_RULES:
-        match = re.search(pattern, stdout)
-        if match:
-            metrics[field] = float(match.group(1)) * scale
+    for line in stdout.splitlines():
+        if not line.startswith("│"):
+            continue
+        cells = [cell.strip() for cell in line.strip("│").split("│")]
+        if len(cells) < 9:
+            continue
+        name = cells[0]
+        field = TABLE_ROWS.get(name)
+        if not field or cells[1] != "total":
+            continue
+        average = _number(cells[2])
+        p90 = _number(cells[7])
+        if average is not None:
+            metrics[field] = average
+        if p90 is not None:
+            metrics[f"{field}_p90"] = p90
     return metrics
 
 
@@ -235,6 +257,8 @@ def execute(config, service, dataset_dir: str, output_dir: str, log_path: str,
     cmd = build_command(config, output_dir)
     started = time.time()
     stdout = run(cmd, log_path, float(config.raw.get("aisbench", {}).get("timeout_seconds", 3600)))
-    metrics = parse_results(output_dir) or parse_stdout(stdout)
+    metrics = parse_results(output_dir)
+    for key, value in parse_stdout(stdout).items():
+        metrics.setdefault(key, value)
     metrics["wall_seconds"] = round(time.time() - started, 1)
     return RunResult(metrics=metrics, stdout=stdout, output_dir=output_dir, command=cmd)

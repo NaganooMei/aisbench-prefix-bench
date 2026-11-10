@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import aisbench, dataset, metrics
+from .config import Case
 
 RESET_EXTERNAL = {"cache": False, "posix-reset": True}
 
@@ -74,6 +75,37 @@ def _measure(
     return run.metrics
 
 
+def _warmup(config, service, tokenizer, corpus, run_dir: str, log) -> None:
+    """Absorb first-run costs (graph capture, batch shape) outside the matrix."""
+    settings = config.raw.get("warmup") or {}
+    template = config.cases[0]
+    case = Case(
+        input_len=int(settings.get("input_len", template.input_len)),
+        output_len=int(settings.get("output_len", template.output_len)),
+        hit_rate=float(settings.get("hit_rate", template.hit_rate)),
+        concurrency=int(settings.get("concurrency", template.concurrency)),
+        num_requests=int(settings.get("num_requests", template.num_requests)),
+    )
+    warm_dir = os.path.join(run_dir, service.name, "_warmup")
+    dataset_dir = os.path.join(warm_dir, "dataset")
+    built = dataset.build_dataset(
+        tokenizer, corpus, case, config.block_tokens, seed=12345, dp=1
+    )
+    dataset.write_dataset_dir(dataset_dir, built.full_rows)
+    log(f"{service.name} warmup ({case.num_requests} requests)")
+    try:
+        _measure(
+            config, service, dataset_dir,
+            os.path.join(warm_dir, "run"),
+            os.path.join(warm_dir, "warmup.log"),
+            request_rate=0,
+            output_len=case.output_len,
+            concurrency=case.concurrency,
+        )
+    except Exception as exc:  # noqa: BLE001 - warmup must not abort the matrix
+        log(f"  warmup failed (continuing): {type(exc).__name__}: {exc}")
+
+
 def run_all(config, log=print, dry_run: bool = False) -> list[CaseResult]:
     run_id = _run_id()
     run_dir = os.path.join(config.work_dir, run_id)
@@ -82,6 +114,8 @@ def run_all(config, log=print, dry_run: bool = False) -> list[CaseResult]:
 
     for service in config.services:
         tokenizer = None if dry_run else dataset.load_tokenizer(service.tokenizer_path)
+        if not dry_run and (config.raw.get("warmup") or {}).get("enabled", True):
+            _warmup(config, service, tokenizer, corpus, run_dir, log)
         for case in config.cases:
             case_label = case.label(config.block_tokens)
             seed = case.seed if case.seed is not None else (

@@ -84,16 +84,17 @@ python bench.py run bench.example.json
 输出：
 
 ```
-Service      Mode          Input  Target  HBM hit  Ext hit  TTFT ms  TPOT ms  Out tok/s  Total tok/s  Load GB/s  Status
------------  ------------  -----  ------  -------  -------  -------  -------  ---------  -----------  ---------  ------
-qwen38-27b   hbm           8K     90%     89.1%    0.0%     ...
-qwen38-27b   cache         8K     90%     0.0%     87.4%    ...
-qwen38-27b   posix-reset   8K     90%     0.0%     86.9%    ...
+Service      Mode         Input  Target  HBM hit  Ext hit  Hit tok  Prefill tok  TTFT ms  ...
+-----------  -----------  -----  ------  -------  -------  -------  -----------  -------
+qwen38-27b   hbm          8K     89%     86.9%    0.0%     114,688  17,222       1,448.9  ...
+qwen38-27b   cache        8K     89%     0.0%     97.8%    129,024  2,886        556.7    ...
+qwen38-27b   posix-reset  8K     89%     0.0%     97.8%    129,024  2,886        669.9    ...
 ```
 
 - `Target`：按 `block_tokens` 对齐后实际可达的目标命中率（例如配置 0.9、8K 输入时是 7296/8192 = 89%）。
-- `HBM hit`：`vllm:prefix_cache_hits / queries` 增量。
-- `Ext hit`：`vllm:external_prefix_cache_hits / queries` 增量，即 UCM/SGLang HiCache 等外部缓存贡献的命中。
+- `HBM hit`：`vllm:prefix_cache_hits / queries` 增量，分母是查询 token。
+- `Ext hit`：`vllm:external_prefix_cache_hits / queries` 增量，即 UCM/SGLang HiCache 等外部缓存贡献的命中；**分母是扣除 HBM 命中后剩余的 token**，所以它和 `HBM hit` 不能直接相加。
+- `Hit tok` / `Prefill tok`：跨模式对比只看这两列——命中 token 绝对量和仍然需要重算的 token 数。
 - `Load GB/s`：`ucm:cache_load_bytes_total` 与 `ucm:cache_load_duration_ms_sum` 折算的加载带宽，缺指标时显示 `n/a`。
 
 每个格子还会落盘 `case_result.json`（配置、seed、reset 结果、性能与命中增量、错误），`results/summary.csv` 是汇总表。重新出表：

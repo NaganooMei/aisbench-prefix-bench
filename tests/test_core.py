@@ -162,8 +162,9 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(row[2], "8K")
         self.assertEqual(row[4], "0.0%")
         self.assertEqual(row[5], "98.4%")
-        self.assertEqual(row[6], "808.3")
-        self.assertEqual(row[7], "n/a")
+        self.assertEqual(row[6], "n/a")  # hit tokens unavailable without counters
+        self.assertEqual(row[8], "808.3")
+        self.assertEqual(row[9], "n/a")
 
 
 if __name__ == "__main__":

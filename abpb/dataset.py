@@ -154,4 +154,8 @@ def write_jsonl(path: str, rows: list[str]) -> None:
 def write_dataset_dir(directory: str, rows: list[str], name: str = "test.jsonl") -> str:
     path = os.path.join(directory, name)
     write_jsonl(path, rows)
+    # GSM8K loads a train split even for 0-shot runs; an empty file satisfies it.
+    train = os.path.join(directory, "train.jsonl")
+    if not os.path.exists(train):
+        write_jsonl(train, [])
     return path
