@@ -53,8 +53,8 @@ python bench.py run bench.example.json --dry-run   # 只校验配置，不发请
 ```json
 {
   "services": [
-    {"name": "qwen38-27b", "base_url": "http://127.0.0.1:5261",
-     "served_model": "Qwen3.8-27B", "model_path": "/mnt/model/Qwen3.8-27B", "dp": 1}
+    {"name": "svc-a", "base_url": "http://127.0.0.1:8000",
+     "served_model": "model-a", "model_path": "/models/model-a", "dp": 1}
   ],
   "cases": [
     {"input_len": 8192, "output_len": 1, "hit_rate": 0.9, "prefix_num": 1,
@@ -86,9 +86,9 @@ python bench.py run bench.example.json
 ```
 Service      Mode         Input  Target  HBM hit  Ext hit  Hit tok  Prefill tok  TTFT ms  ...
 -----------  -----------  -----  ------  -------  -------  -------  -----------  -------
-qwen38-27b   hbm          8K     89%     86.9%    0.0%     114,688  17,222       1,448.9  ...
-qwen38-27b   cache        8K     89%     0.0%     97.8%    129,024  2,886        556.7    ...
-qwen38-27b   posix-reset  8K     89%     0.0%     97.8%    129,024  2,886        669.9    ...
+svc-a        hbm          8K     89%     86.9%    0.0%     114,688  17,222       1,448.9  ...
+svc-a        cache        8K     89%     0.0%     97.8%    129,024  2,886        556.7    ...
+svc-a        posix-reset  8K     89%     0.0%     97.8%    129,024  2,886        669.9    ...
 ```
 
 - `Target`：按 `block_tokens` 对齐后实际可达的目标命中率（例如配置 0.9、8K 输入时是 7296/8192 = 89%）。

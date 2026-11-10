@@ -1,17 +1,17 @@
 {
   "services": [
     {
-      "name": "qwen38-27b",
-      "base_url": "http://127.0.0.1:5261",
-      "served_model": "Qwen3.8-27B",
-      "model_path": "/mnt/model/Qwen3.8-27B",
+      "name": "svc-a",
+      "base_url": "http://127.0.0.1:8000",
+      "served_model": "model-a",
+      "model_path": "/models/model-a",
       "dp": 1
     },
     {
-      "name": "dsv4-flash",
-      "base_url": "http://127.0.0.1:5263",
-      "served_model": "DeepSeek-V4-Flash-0731-w8a8",
-      "model_path": "/mnt/model/DeepSeek-V4-Flash-0731-w8a8",
+      "name": "svc-b",
+      "base_url": "http://127.0.0.1:8001",
+      "served_model": "model-b",
+      "model_path": "/models/model-b",
       "dp": 1
     }
   ],
