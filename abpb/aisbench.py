@@ -11,8 +11,13 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-MODEL_ABBR = "abpb_model"
-DATASET_ABBR = "abpb_gsm8k_perf"
+def _abbrs() -> tuple[str, str]:
+    """Unique config names per process: two runs share one AISBench install."""
+    token = f"{os.getpid()}_{int(time.time()) % 100000}"
+    return f"abpb_model_{token}", f"abpb_gsm8k_perf_{token}"
+
+
+MODEL_ABBR, DATASET_ABBR = _abbrs()
 
 MODEL_TEMPLATE = '''\
 from abpb.aisbench_model import RankPinnedStreamChat
