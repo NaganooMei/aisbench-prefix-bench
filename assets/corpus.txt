@@ -1,0 +1,22 @@
+The cache hierarchy stores KV blocks in device memory first, then in the host buffer, and finally on local storage. A request that finds its prefix in a lower tier must move the data back up before decode can start.
+Prefix reuse depends on the tokenizer, the block size, and the order in which requests arrive. Changing any of these changes which tokens count as a cache hit.
+A serving process keeps its own copy of the block table, so ranks must agree on the key layout before they can share anything.
+Benchmark runs should record the seed, the request shape, and the reset call that preceded the measurement window.
+Host memory is cheaper than device memory but still finite; capacity planning for the middle tier decides which workloads benefit from reuse.
+When the fast tier is cleared, a backend tier can still answer, but the transfer cost moves from a synchronous copy to a storage read.
+Storage reads are bound by queue depth and chunk size, so coarser transfer units waste bandwidth on small reuse even when the hit rate is high.
+Every measurement should be paired with a control run that never touches the cache, otherwise the improvement cannot be separated from startup effects.
+The scheduler decides how many blocks to load per request, and that decision interacts with concurrency: a wide batch multiplies the number of outstanding reads.
+Long prompts make prefix reuse attractive, but they also make each miss expensive, so the ratio between hit and miss cost grows with context length.
+Operator actions such as clearing a tier must be reported to the caller, because a silent failure looks identical to a successful measurement of a warm cache.
+Health probes and cache resets are different operations: a probe asks whether a backend answers, while a reset changes what the backend contains.
+Telemetry should distinguish tokens served from device memory, from the host buffer, and from storage, since the three have very different costs.
+A benchmark table is only useful when every row states its target hit ratio next to the measured one, because a mismatch invalidates the comparison.
+Requests that share a prefix but differ afterwards let a test control the hit ratio precisely: the shared part can be reused, the unique tail cannot.
+Seed data must be shaped like the measured data, otherwise the cache holds keys that the measurement never asks for and the hit rate falls to zero.
+Concurrency changes both latency and hit rate: more outstanding requests give the loader more chances to overlap, but also compete for the same buffer slots.
+Restarting a service between phases is the strictest way to clear every tier, at the cost of reloading weights and paying startup overhead again.
+A reset that only clears device memory leaves the host tier warm, which is exactly the setup needed to measure the middle tier in isolation.
+Capacity limits turn a cache into a stream: once the working set exceeds the tier, old blocks are evicted before they are reused.
+Measuring throughput without recording the request count and input length hides whether the number came from fewer, longer requests or more, shorter ones.
+Latency percentiles matter more than the mean when the tail is driven by storage reads that queue behind each other.

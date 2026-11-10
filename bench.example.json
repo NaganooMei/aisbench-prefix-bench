@@ -1,0 +1,50 @@
+{
+  "services": [
+    {
+      "name": "qwen38-27b",
+      "base_url": "http://127.0.0.1:5261",
+      "served_model": "Qwen3.8-27B",
+      "model_path": "/mnt/model/Qwen3.8-27B",
+      "dp": 1
+    },
+    {
+      "name": "dsv4-flash",
+      "base_url": "http://127.0.0.1:5263",
+      "served_model": "DeepSeek-V4-Flash-0731-w8a8",
+      "model_path": "/mnt/model/DeepSeek-V4-Flash-0731-w8a8",
+      "dp": 1
+    }
+  ],
+  "cases": [
+    {
+      "input_len": 8192,
+      "output_len": 1,
+      "hit_rate": 0.9,
+      "prefix_num": 1,
+      "concurrency": 8,
+      "num_requests": 16
+    }
+  ],
+  "modes": ["hbm", "cache", "posix-reset"],
+  "block_tokens": 128,
+  "corpus_path": "assets/corpus.txt",
+  "work_dir": "work",
+  "results_dir": "results",
+  "seed_settle_seconds": 10,
+  "reset": {
+    "timeout_seconds": 60,
+    "retry_interval_seconds": 5
+  },
+  "metrics": {
+    "enabled": true,
+    "settle_seconds": 2,
+    "timeout_seconds": 10
+  },
+  "aisbench": {
+    "command": "ais_bench",
+    "summarizer": "default_perf",
+    "configs_dir": "",
+    "extra_args": [],
+    "timeout_seconds": 3600
+  }
+}
