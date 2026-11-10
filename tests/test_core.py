@@ -89,25 +89,33 @@ class DatasetTests(unittest.TestCase):
     def test_prefix_and_tail_shape(self):
         tok = FakeTokenizer()
         case = Case(1024, 1, 0.5, 2, 6, prefix_num=2)
-        built = dataset.build_dataset(tok, ["abcdefghij"] * 4, case, 128, seed=7, dp=2)
+        built = dataset.build_dataset(tok, ["abcdefghij"] * 4, case, 128, seed=7)
         self.assertEqual(built.prefix_tokens, 512)
         self.assertEqual(len(built.full_rows), 6)
-        # every DP engine gets each distinct prefix once
-        self.assertEqual(len(built.prefix_rows), 2 * 2)
+        # seeding sends one request per distinct prefix; the runner repeats it per DP
+        self.assertEqual(len(built.prefix_rows), 2)
         for row in built.full_rows:
             self.assertGreater(len(tok.encode(row)), built.prefix_tokens)
+
+    def test_default_is_one_prefix_per_request(self):
+        tok = FakeTokenizer()
+        case = Case(1024, 1, 0.5, 4, 4)
+        built = dataset.build_dataset(tok, ["abcdefghij", "klmnopqrst"], case, 128, seed=5)
+        self.assertEqual(len(built.prefix_rows), 4)
+        heads = {row[: built.prefix_tokens] for row in built.full_rows}
+        self.assertEqual(len(heads), 4)
 
     def test_shared_prefixes_are_reused(self):
         tok = FakeTokenizer()
         case = Case(1024, 1, 0.5, 3, 4, prefix_num=2)
-        built = dataset.build_dataset(tok, ["xyzw" * 30, "abcd" * 30], case, 128, seed=3, dp=1)
+        built = dataset.build_dataset(tok, ["xyzw" * 30, "abcd" * 30], case, 128, seed=3)
         heads = {row[: built.prefix_tokens] for row in built.full_rows}
         self.assertEqual(len(heads), 2)
 
     def test_tails_are_unique(self):
         tok = FakeTokenizer()
         case = Case(512, 1, 0.5, 3, 4, prefix_num=1)
-        built = dataset.build_dataset(tok, ["pqrs" * 30], case, 128, seed=11, dp=1)
+        built = dataset.build_dataset(tok, ["pqrs" * 30], case, 128, seed=11)
         tails = [row[built.prefix_tokens:] for row in built.full_rows]
         self.assertEqual(len(set(tails)), len(tails))
 

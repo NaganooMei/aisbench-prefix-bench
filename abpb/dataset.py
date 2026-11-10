@@ -103,13 +103,24 @@ class CaseDataset:
     seed: int
 
 
+def _prefix_source(corpus: list[str], index: int) -> str:
+    """Pick filler text so that per-request prefixes stay distinct.
+
+    Beyond the corpus size the plain ``index % len`` cycle would hand two
+    requests the same prefix; pairing two entries extends the period to n^2.
+    """
+    size = len(corpus)
+    if index < size:
+        return corpus[index]
+    return corpus[index % size] + " " + corpus[(index // size) % size]
+
+
 def build_dataset(
     tokenizer,
     corpus: list[str],
     case: Case,
     block_tokens: int,
     seed: int,
-    dp: int,
 ) -> CaseDataset:
     prefix_tokens = case.prefix_tokens(block_tokens)
     suffix_tokens = case.suffix_tokens(block_tokens)
@@ -119,9 +130,10 @@ def build_dataset(
         raise DatasetError(f"suffix {suffix_tokens} too short for input_len={case.input_len}")
 
     rng = random.Random(seed)
+    groups = case.prefix_groups()
     prefixes = [
-        fit_tokens(tokenizer, corpus[index % len(corpus)], prefix_tokens)
-        for index in range(case.prefix_num)
+        fit_tokens(tokenizer, _prefix_source(corpus, index), prefix_tokens)
+        for index in range(groups)
     ]
     suffixes = [
         fit_tokens(tokenizer, corpus[rng.randrange(len(corpus))], suffix_tokens)
@@ -134,11 +146,12 @@ def build_dataset(
     ]
 
     full_rows = [
-        prefixes[index % case.prefix_num] + uniques[index] + suffixes[index]
+        prefixes[index % groups] + uniques[index] + suffixes[index]
         for index in range(case.num_requests)
     ]
-    # Warm every DP engine: each distinct prefix once per data-parallel rank.
-    prefix_rows = [prefix for prefix in prefixes for _ in range(max(dp, 1))]
+    # One seed request per distinct prefix; the runner sends this set to every
+    # DP rank explicitly, so each engine is warmed with the right prefixes.
+    prefix_rows = list(prefixes)
     return CaseDataset(prefix_rows, full_rows, prefix_tokens, suffix_tokens, seed)
 
 

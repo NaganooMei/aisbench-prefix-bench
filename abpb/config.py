@@ -33,9 +33,15 @@ class Case:
     hit_rate: float
     concurrency: int
     num_requests: int
-    prefix_num: int = 1
+    prefix_num: int | None = None
     seed: int | None = None
     request_rate: float = 0.0
+
+    def prefix_groups(self) -> int:
+        """Distinct prefixes: one per request unless a shared count is pinned."""
+        if self.prefix_num is None:
+            return self.num_requests
+        return min(self.prefix_num, self.num_requests)
 
     def prefix_tokens(self, block_tokens: int) -> int:
         """Prefix length rounded down to a multiple of the cache block size."""
@@ -144,7 +150,9 @@ def load_config(path: str) -> Config:
             hit_rate=hit,
             concurrency=_positive_int(item, "concurrency", where),
             num_requests=_positive_int(item, "num_requests", where),
-            prefix_num=_positive_int(item, "prefix_num", where, 1),
+            prefix_num=(
+                _positive_int(item, "prefix_num", where) if "prefix_num" in item else None
+            ),
             seed=item.get("seed"),
             request_rate=float(item.get("request_rate", 0) or 0),
         )

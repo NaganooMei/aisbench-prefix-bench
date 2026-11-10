@@ -15,12 +15,13 @@ MODEL_ABBR = "abpb_model"
 DATASET_ABBR = "abpb_gsm8k_perf"
 
 MODEL_TEMPLATE = '''\
-from ais_bench.benchmark.models import VLLMCustomAPIChatStream
+from abpb.aisbench_model import RankPinnedStreamChat
 
 models = [
     dict(
         attr="service",
-        type=VLLMCustomAPIChatStream,
+        type=RankPinnedStreamChat,
+        dp_rank={dp_rank},
         abbr="{abbr}",
         path="{tokenizer}",
         model="{served_model}",
@@ -105,6 +106,7 @@ def write_configs(
     request_rate: float,
     output_len: int,
     concurrency: int,
+    dp_rank: int | None = None,
 ) -> tuple[str, str]:
     parsed = urlparse(service.base_url)
     host = parsed.hostname or "127.0.0.1"
@@ -127,6 +129,7 @@ def write_configs(
                 port=port,
                 output_len=output_len,
                 concurrency=concurrency,
+                dp_rank="None" if dp_rank is None else int(dp_rank),
             )
         )
     with open(dataset_path, "w", encoding="utf-8") as fh:
@@ -150,11 +153,16 @@ def build_command(config, output_dir: str) -> list[str]:
 
 def run(cmd: list[str], log_path: str, timeout_s: float) -> str:
     os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+    env = dict(os.environ)
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     with open(log_path, "w", encoding="utf-8") as log:
         log.write("$ " + " ".join(cmd) + "\n")
         log.flush()
         try:
-            proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=timeout_s)
+            proc = subprocess.run(
+                cmd, stdout=log, stderr=subprocess.STDOUT, timeout=timeout_s, env=env
+            )
         except subprocess.TimeoutExpired as exc:
             raise AisbenchError(f"ais_bench timed out after {timeout_s:.0f}s") from exc
         except OSError as exc:
@@ -251,9 +259,11 @@ def parse_stdout(stdout: str) -> dict:
 
 
 def execute(config, service, dataset_dir: str, output_dir: str, log_path: str,
-            request_rate: float, output_len: int, concurrency: int) -> RunResult:
+            request_rate: float, output_len: int, concurrency: int,
+            dp_rank: int | None = None) -> RunResult:
     configs_dir = config.configs_dir or find_configs_dir()
-    write_configs(configs_dir, service, dataset_dir, request_rate, output_len, concurrency)
+    write_configs(configs_dir, service, dataset_dir, request_rate, output_len,
+                  concurrency, dp_rank)
     cmd = build_command(config, output_dir)
     started = time.time()
     stdout = run(cmd, log_path, float(config.raw.get("aisbench", {}).get("timeout_seconds", 3600)))

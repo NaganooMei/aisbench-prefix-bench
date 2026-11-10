@@ -20,13 +20,20 @@
       "input_len": 8192,
       "output_len": 1,
       "hit_rate": 0.9,
-      "prefix_num": 1,
       "concurrency": 8,
       "num_requests": 16
     }
   ],
   "modes": ["hbm", "cache", "posix-reset"],
   "block_tokens": 128,
+  "warmup": {
+    "enabled": true,
+    "input_len": 8192,
+    "output_len": 1,
+    "hit_rate": 0.9,
+    "concurrency": 4,
+    "num_requests": 4
+  },
   "corpus_path": "assets/corpus.txt",
   "work_dir": "work",
   "results_dir": "results",

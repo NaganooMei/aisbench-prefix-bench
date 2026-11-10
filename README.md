@@ -15,18 +15,31 @@
 每条请求：
 
 ```
-公共前缀（长度 = input_len × hit_rate，按 block_tokens 向下取整）
+前缀（长度 = input_len × hit_rate，按 block_tokens 向下取整）
   + N 个唯一随机 token（默认 3）
   + 随机后缀（补足到 input_len）
 ```
 
-因为前缀之后的 token 每条都不同，**只有公共前缀能被复用**，实际可达命中率就等于配置的 `hit_rate`；`prefix_num` 控制不同前缀的个数，`seed` 控制随机 token。
+默认 **一条请求一条独立前缀**（不配置 `prefix_num` 时等于 `num_requests`）。需要模拟多请求共享同一前缀时显式配置 `prefix_num`，请求按 `i % prefix_num` 分组共用前缀。
 
-预热阶段只发送公共前缀本身（每 prefix、每 DP 各一次），所以正式请求能如预期命中，而不同 DP 的 engine 也都被覆盖。
+因为前缀之后的 token 每条都不同，只有前缀能被复用，实际可达命中率就等于 `hit_rate`。`seed` 控制唯一 token 与后缀。
+
+## 预埋（seed）与预热（warmup）是两件事
+
+| | 做什么 | 条数 | 目的 |
+| --- | --- | --- | --- |
+| **预埋** | 只发前缀本身，把每个前缀写进缓存 | 前缀组数 × DP 数 | 让正式请求能命中 |
+| **预热** | 用 4 条 8K 请求跑一遍完整循环（预埋 → 清缓存 → 加载） | 每组 4 条 × DP 数 | 把 **load 流程**（图捕获、加载线程、缓冲区）跑热，避免正式 case 吸收首轮开销 |
+
+要点：
+
+- 预埋和预热都**按 DP 定向**：通过 `X-data-parallel-rank` 头把请求钉到指定 rank，每个 DP 都收到完整的前缀集合，不靠内部 LB 碰运气。
+- 预热在每个 mode 开始前各做一次（HBM 不 reset，cache 清 HBM，posix-reset 清 HBM+UCM），因为三种模式的 load 路径不同。
+- 预热数据使用独立 seed，不进汇总表；参数可在 `warmup` 里覆盖（默认 8K 输入、4 请求、4 并发、90% 命中、输出 1 token）。
 
 ## 三种模式
 
-| 模式 | 预热 | 清缓存 | 说明 |
+| 模式 | 预埋 | 清缓存 | 说明 |
 | --- | --- | --- | --- |
 | `hbm` | 发前缀 | 不清 | vLLM 自身 HBM 前缀缓存的热态基线 |
 | `cache` | 发前缀 | `reset_external=false` 只清 HBM | 保留 UCM 内存 Cache，测 Host Cache 命中 |
@@ -57,7 +70,7 @@ python bench.py run bench.example.json --dry-run   # 只校验配置，不发请
      "served_model": "model-a", "model_path": "/models/model-a", "dp": 1}
   ],
   "cases": [
-    {"input_len": 8192, "output_len": 1, "hit_rate": 0.9, "prefix_num": 1,
+    {"input_len": 8192, "output_len": 1, "hit_rate": 0.9,
      "concurrency": 8, "num_requests": 16, "request_rate": 0}
   ],
   "modes": ["hbm", "cache", "posix-reset"],
@@ -69,7 +82,9 @@ python bench.py run bench.example.json --dry-run   # 只校验配置，不发请
 关键字段：
 
 - `services[]`：**一条配置可以放多个服务**，同一组 case 会在每个服务上各跑一遍，最终进同一张表。
-- `cases[]`：`hit_rate` 必须在 (0,1) 开区间；`concurrency <= num_requests`；`request_rate=0` 表示不限速。
+- `cases[]`：`hit_rate` 必须在 (0,1) 开区间；`concurrency <= num_requests`；`request_rate=0` 表示不限速。`prefix_num` 可选，不填即"一请求一前缀"，填了就是若干个请求共享同一条前缀。
+- `services[].dp`：数据并行的 DP 域数量，决定预热和预埋要在几个 rank 上各做一遍。
+- `warmup`：预热组参数，默认 `{"input_len": 8192, "num_requests": 4, "concurrency": 4, "hit_rate": 0.9, "output_len": 1}`，`enabled=false` 可关闭。
 - `block_tokens`：服务的实际缓存块长度。目标前缀按它向下取整，`8192 × 0.9 = 7372 → 7296`（128 对齐）。
 - `corpus_path`：填充文本，支持 `{"question": ...}` 的 JSONL 或纯文本，可指向真实 GSM8K。
 - `work_dir` / `results_dir`：原始产物与汇总表位置。
@@ -86,9 +101,9 @@ python bench.py run bench.example.json
 ```
 Service      Mode         Input  Target  HBM hit  Ext hit  Hit tok  Prefill tok  TTFT ms  ...
 -----------  -----------  -----  ------  -------  -------  -------  -----------  -------
-svc-a        hbm          8K     89%     86.9%    0.0%     114,688  17,222       1,448.9  ...
-svc-a        cache        8K     89%     0.0%     97.8%    129,024  2,886        556.7    ...
-svc-a        posix-reset  8K     89%     0.0%     97.8%    129,024  2,886        669.9    ...
+svc-a        hbm          8K     89%     86.9%    0.0%     114,688  17,217       1,521.9  ...
+svc-a        cache        8K     89%     0.0%     97.8%    129,024  2,881        674.7    ...
+svc-a        posix-reset  8K     89%     0.0%     97.8%    129,024  2,881        700.8    ...
 ```
 
 - `Target`：按 `block_tokens` 对齐后实际可达的目标命中率（例如配置 0.9、8K 输入时是 7296/8192 = 89%）。
