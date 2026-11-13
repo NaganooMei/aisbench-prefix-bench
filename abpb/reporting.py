@@ -109,6 +109,7 @@ class _Loaded:
     """Minimal shim so report can render results read back from disk."""
 
     def __init__(self, payload: dict):
+        self.payload = payload
         self.service = payload.get("service", "")
         self.case = payload.get("case", "")
         self.mode = payload.get("mode", "")
@@ -130,3 +131,33 @@ def load_results(results_dir: str) -> list[_Loaded]:
                 found.append((os.path.getmtime(path), _Loaded(json.load(fh))))
     found.sort(key=lambda item: item[0])
     return [item[1] for item in found]
+
+
+def write_reports(directory):
+    """Use the same numerical fields, metrics definitions and XLSX as vllmbench."""
+    from pathlib import Path
+    from .vllm_reporting import write_summary
+    from .runner import _perf_metrics
+
+    rows = []
+    for loaded in load_results(str(directory)):
+        value = dict(loaded.payload)
+        if "target_hit_rate" not in value:
+            value.update(_perf_metrics(loaded.perf))
+            value.update(loaded.hits)
+            value.update(value.get("details", {}))
+            value["target_hit_rate"] = loaded.target_hit
+            value["status"] = "complete" if loaded.status == "ok" else loaded.status
+            hbm_queries = loaded.hits.get("hbm_queries")
+            if hbm_queries:
+                value["external_hit_rate_remaining"] = loaded.hits.get(
+                    "external_hit_rate"
+                )
+                hits = loaded.hits.get("external_hits")
+                value["external_hit_rate"] = (
+                    hits / hbm_queries if hits is not None else None
+                )
+        rows.append(value)
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    return write_summary(directory, rows)

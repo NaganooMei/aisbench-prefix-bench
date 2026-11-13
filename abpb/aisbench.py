@@ -8,43 +8,45 @@ import re
 import subprocess
 import sys
 import time
+import secrets
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+
 def _abbrs() -> tuple[str, str]:
     """Unique config names per process: two runs share one AISBench install."""
-    token = f"{os.getpid()}_{int(time.time()) % 100000}"
+    token = f"{os.getpid()}_{secrets.token_hex(6)}"
     return f"abpb_model_{token}", f"abpb_gsm8k_perf_{token}"
 
 
 MODEL_ABBR, DATASET_ABBR = _abbrs()
 
-MODEL_TEMPLATE = '''\
-from abpb.aisbench_model import RankPinnedStreamChat
+MODEL_TEMPLATE = """\
+from abpb.aisbench_model import RankPinnedStreamCompletion
 
 models = [
     dict(
         attr="service",
-        type=RankPinnedStreamChat,
+        type=RankPinnedStreamCompletion,
         dp_rank={dp_rank},
-        abbr="{abbr}",
-        path="{tokenizer}",
-        model="{served_model}",
-        api_key="{api_key}",
+        abbr={abbr!r},
+        path={tokenizer!r},
+        model={served_model!r},
+        api_key={api_key!r},
         request_rate={request_rate},
-        retry=2,
-        host_ip="{host}",
+        retry=1,
+        host_ip={host!r},
         host_port={port},
-        url="",
+        url={base_url!r},
         max_out_len={output_len},
         batch_size={concurrency},
         trust_remote_code=True,
-        generation_kwargs=dict(temperature=0, ignore_eos=True),
+        generation_kwargs=dict(temperature=0, ignore_eos=True, add_special_tokens=False),
     )
 ]
-'''
+"""
 
-DATASET_TEMPLATE = '''\
+DATASET_TEMPLATE = """\
 from ais_bench.benchmark.openicl.icl_prompt_template import PromptTemplate
 from ais_bench.benchmark.openicl.icl_retriever import ZeroRetriever
 from ais_bench.benchmark.openicl.icl_inferencer import GenInferencer
@@ -61,14 +63,14 @@ gsm8k_eval_cfg = dict(pred_role='BOT')
 
 gsm8k_datasets = [
     dict(
-        abbr='{abbr}',
+        abbr={abbr!r},
         type=GSM8KDataset,
-        path='{dataset_dir}',
+        path={dataset_dir!r},
         reader_cfg=gsm8k_reader_cfg,
         infer_cfg=gsm8k_infer_cfg,
         eval_cfg=gsm8k_eval_cfg)
 ]
-'''
+"""
 
 
 class AisbenchError(RuntimeError):
@@ -112,20 +114,22 @@ def write_configs(
     output_len: int,
     concurrency: int,
     dp_rank: int | None = None,
+    model_abbr: str = MODEL_ABBR,
+    dataset_abbr: str = DATASET_ABBR,
 ) -> tuple[str, str]:
     parsed = urlparse(service.base_url)
     host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 80
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
-    model_path = os.path.join(configs_dir, "models", "vllm_api", f"{MODEL_ABBR}.py")
-    dataset_path = os.path.join(configs_dir, "datasets", "gsm8k", f"{DATASET_ABBR}.py")
+    model_path = os.path.join(configs_dir, "models", "vllm_api", f"{model_abbr}.py")
+    dataset_path = os.path.join(configs_dir, "datasets", "gsm8k", f"{dataset_abbr}.py")
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     os.makedirs(os.path.dirname(dataset_path), exist_ok=True)
 
     with open(model_path, "w", encoding="utf-8") as fh:
         fh.write(
             MODEL_TEMPLATE.format(
-                abbr=MODEL_ABBR,
+                abbr=model_abbr,
                 tokenizer=service.tokenizer_path,
                 served_model=service.served_model,
                 api_key=service.api_key,
@@ -135,22 +139,31 @@ def write_configs(
                 output_len=output_len,
                 concurrency=concurrency,
                 dp_rank="None" if dp_rank is None else int(dp_rank),
+                base_url=service.base_url.rstrip("/") + "/",
             )
         )
     with open(dataset_path, "w", encoding="utf-8") as fh:
-        fh.write(DATASET_TEMPLATE.format(abbr=DATASET_ABBR, dataset_dir=dataset_dir))
+        fh.write(DATASET_TEMPLATE.format(abbr=dataset_abbr, dataset_dir=dataset_dir))
     return model_path, dataset_path
 
 
-def build_command(config, output_dir: str) -> list[str]:
+def build_command(
+    config, output_dir: str, model_abbr=MODEL_ABBR, dataset_abbr=DATASET_ABBR
+) -> list[str]:
     cmd = [
         config.aisbench_command,
-        "--models", MODEL_ABBR,
-        "--datasets", DATASET_ABBR,
-        "--mode", "perf",
-        "--summarizer", config.summarizer,
-        "--work-dir", output_dir,
-        "--num-warmups", "0",
+        "--models",
+        model_abbr,
+        "--datasets",
+        dataset_abbr,
+        "--mode",
+        "perf",
+        "--summarizer",
+        config.summarizer,
+        "--work-dir",
+        output_dir,
+        "--num-warmups",
+        "0",
     ]
     cmd.extend(config.aisbench_extra_args)
     return cmd
@@ -160,7 +173,9 @@ def run(cmd: list[str], log_path: str, timeout_s: float) -> str:
     os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
     env = dict(os.environ)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env["PYTHONPATH"] = root + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+    )
     with open(log_path, "w", encoding="utf-8") as log:
         log.write("$ " + " ".join(cmd) + "\n")
         log.flush()
@@ -193,25 +208,29 @@ JSON_METRICS = {
     "total generated tokens": "output_tokens",
 }
 
-_NUMBER = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
+_NUMBER = re.compile(r"[-+]?[0-9]+(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?")
 
 
 def _number(value) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
     if isinstance(value, str):
-        match = _NUMBER.search(value)
+        match = _NUMBER.search(value.replace(",", ""))
         if match:
             return float(match.group(0))
     return None
 
 
-def parse_results(output_dir: str) -> dict:
+def parse_results(output_dir: str, dataset_abbr=DATASET_ABBR) -> dict:
     """Read the per-dataset perf JSON AISBench writes under <work-dir>."""
     candidates = []
     for root, _dirs, files in os.walk(output_dir):
         for name in files:
-            if name.endswith(".json") and DATASET_ABBR in name and "details" not in name:
+            if (
+                name.endswith(".json")
+                and dataset_abbr in name
+                and "details" not in name
+            ):
                 candidates.append(os.path.join(root, name))
     if not candidates:
         return {}
@@ -260,19 +279,49 @@ def parse_stdout(stdout: str) -> dict:
             metrics[field] = average
         if p90 is not None:
             metrics[f"{field}_p90"] = p90
+        for suffix, index in (("median", 5), ("p99", 8)):
+            number = _number(cells[index])
+            if number is not None:
+                metrics[f"{field}_{suffix}"] = number
     return metrics
 
 
-def execute(config, service, dataset_dir: str, output_dir: str, log_path: str,
-            request_rate: float, output_len: int, concurrency: int,
-            dp_rank: int | None = None) -> RunResult:
+def execute(
+    config,
+    service,
+    dataset_dir: str,
+    output_dir: str,
+    log_path: str,
+    request_rate: float,
+    output_len: int,
+    concurrency: int,
+    dp_rank: int | None = None,
+) -> RunResult:
     configs_dir = config.configs_dir or find_configs_dir()
-    write_configs(configs_dir, service, dataset_dir, request_rate, output_len,
-                  concurrency, dp_rank)
-    cmd = build_command(config, output_dir)
+    model_abbr, dataset_abbr = _abbrs()
+    paths = write_configs(
+        configs_dir,
+        service,
+        dataset_dir,
+        request_rate,
+        output_len,
+        concurrency,
+        dp_rank,
+        model_abbr,
+        dataset_abbr,
+    )
+    cmd = build_command(config, output_dir, model_abbr, dataset_abbr)
     started = time.time()
-    stdout = run(cmd, log_path, float(config.raw.get("aisbench", {}).get("timeout_seconds", 3600)))
-    metrics = parse_results(output_dir)
+    try:
+        stdout = run(
+            cmd,
+            log_path,
+            float(config.raw.get("aisbench", {}).get("timeout_seconds", 3600)),
+        )
+        metrics = parse_results(output_dir, dataset_abbr)
+    finally:
+        for path in paths:
+            os.unlink(path)
     for key, value in parse_stdout(stdout).items():
         metrics.setdefault(key, value)
     metrics["wall_seconds"] = round(time.time() - started, 1)

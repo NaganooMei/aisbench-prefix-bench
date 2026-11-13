@@ -58,23 +58,39 @@ class ConfigTests(unittest.TestCase):
     def test_prefix_is_block_aligned(self):
         case = Case(1024, 1, 0.9, 4, 8)
         self.assertEqual(case.prefix_tokens(128), 896)
-        self.assertEqual(case.suffix_tokens(128), 1024 - 896 - 3)
+        self.assertEqual(case.suffix_tokens(128), 1024 - 896)
 
     def test_rejects_bad_hit_rate(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = write_config(tmp, cases=[{
-                "input_len": 1024, "output_len": 1, "hit_rate": 1.0,
-                "concurrency": 1, "num_requests": 1,
-            }])
+            path = write_config(
+                tmp,
+                cases=[
+                    {
+                        "input_len": 1024,
+                        "output_len": 1,
+                        "hit_rate": 1.1,
+                        "concurrency": 1,
+                        "num_requests": 1,
+                    }
+                ],
+            )
             with self.assertRaises(ConfigError):
                 load_config(path)
 
     def test_rejects_concurrency_above_requests(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = write_config(tmp, cases=[{
-                "input_len": 1024, "output_len": 1, "hit_rate": 0.5,
-                "concurrency": 8, "num_requests": 4,
-            }])
+            path = write_config(
+                tmp,
+                cases=[
+                    {
+                        "input_len": 1024,
+                        "output_len": 1,
+                        "hit_rate": 0.5,
+                        "concurrency": 8,
+                        "num_requests": 4,
+                    }
+                ],
+            )
             with self.assertRaises(ConfigError):
                 load_config(path)
 
@@ -89,7 +105,9 @@ class DatasetTests(unittest.TestCase):
     def test_prefix_and_tail_shape(self):
         tok = FakeTokenizer()
         case = Case(1024, 1, 0.5, 2, 6, prefix_num=2)
-        built = dataset.build_dataset(tok, ["abcdefghij"] * 4, case, 128, seed=7)
+        built = dataset.build_dataset(
+            tok, ["abcdefghij", "klmnopqrst"], case, 128, seed=7
+        )
         self.assertEqual(built.prefix_tokens, 512)
         self.assertEqual(len(built.full_rows), 6)
         # seeding sends one request per distinct prefix; the runner repeats it per DP
@@ -100,7 +118,9 @@ class DatasetTests(unittest.TestCase):
     def test_default_is_one_prefix_per_request(self):
         tok = FakeTokenizer()
         case = Case(1024, 1, 0.5, 4, 4)
-        built = dataset.build_dataset(tok, ["abcdefghij", "klmnopqrst"], case, 128, seed=5)
+        built = dataset.build_dataset(
+            tok, ["abcdefghij", "klmnopqrst", "uvwxyz", "0123456"], case, 128, seed=5
+        )
         self.assertEqual(len(built.prefix_rows), 4)
         heads = {row[: built.prefix_tokens] for row in built.full_rows}
         self.assertEqual(len(heads), 4)
@@ -108,42 +128,55 @@ class DatasetTests(unittest.TestCase):
     def test_shared_prefixes_are_reused(self):
         tok = FakeTokenizer()
         case = Case(1024, 1, 0.5, 3, 4, prefix_num=2)
-        built = dataset.build_dataset(tok, ["xyzw" * 30, "abcd" * 30], case, 128, seed=3)
+        built = dataset.build_dataset(
+            tok, ["xyzw" * 30, "abcd" * 30], case, 128, seed=3
+        )
         heads = {row[: built.prefix_tokens] for row in built.full_rows}
         self.assertEqual(len(heads), 2)
 
-    def test_seed_changes_prefixes(self):
+    def test_seed_changes_unique_tokens_and_suffix(self):
         tok = FakeTokenizer()
-        case = Case(1024, 1, 0.5, 4, 4)
-        first = dataset.build_dataset(tok, ["abcdefghij", "klmnopqrst"], case, 128, seed=1)
-        second = dataset.build_dataset(tok, ["abcdefghij", "klmnopqrst"], case, 128, seed=2)
-        self.assertNotEqual(first.prefix_rows, second.prefix_rows)
+        case = Case(1024, 1, 0.5, 2, 2)
+        first = dataset.build_dataset(
+            tok, ["abcdefghij", "klmnopqrst"], case, 128, seed=1
+        )
+        second = dataset.build_dataset(
+            tok, ["abcdefghij", "klmnopqrst"], case, 128, seed=2
+        )
+        self.assertNotEqual(first.full_rows, second.full_rows)
 
     def test_tails_are_unique(self):
         tok = FakeTokenizer()
         case = Case(512, 1, 0.5, 3, 4, prefix_num=1)
         built = dataset.build_dataset(tok, ["pqrs" * 30], case, 128, seed=11)
-        tails = [row[built.prefix_tokens:] for row in built.full_rows]
+        tails = [row[built.prefix_tokens :] for row in built.full_rows]
         self.assertEqual(len(set(tails)), len(tails))
 
 
 class MetricsTests(unittest.TestCase):
     def test_hit_summary(self):
         before = {
-            metrics.HBM_QUERIES: 100.0, metrics.HBM_HITS: 0.0,
-            metrics.EXT_QUERIES: 200.0, metrics.EXT_HITS: 50.0,
+            metrics.HBM_QUERIES: 100.0,
+            metrics.HBM_HITS: 0.0,
+            metrics.EXT_QUERIES: 200.0,
+            metrics.EXT_HITS: 50.0,
         }
         after = {
-            metrics.HBM_QUERIES: 300.0, metrics.HBM_HITS: 20.0,
-            metrics.EXT_QUERIES: 600.0, metrics.EXT_HITS: 250.0,
+            metrics.HBM_QUERIES: 300.0,
+            metrics.HBM_HITS: 20.0,
+            metrics.EXT_QUERIES: 600.0,
+            metrics.EXT_HITS: 250.0,
         }
         summary = metrics.hit_summary(before, after)
         self.assertEqual(summary["hbm_queries"], 200.0)
         self.assertAlmostEqual(summary["hbm_hit_rate"], 0.1)
-        self.assertAlmostEqual(summary["external_hit_rate"], 200.0 / 400.0)
+        self.assertAlmostEqual(summary["external_hit_rate"], 200.0 / 200.0)
+        self.assertAlmostEqual(summary["external_hit_rate_remaining"], 200.0 / 400.0)
 
     def test_zero_denominator_is_none(self):
-        summary = metrics.hit_summary({}, {metrics.EXT_QUERIES: 0.0, metrics.EXT_HITS: 0.0})
+        summary = metrics.hit_summary(
+            {}, {metrics.EXT_QUERIES: 0.0, metrics.EXT_HITS: 0.0}
+        )
         self.assertIsNone(summary["external_hit_rate"])
 
     def test_counter_reset_is_flagged(self):

@@ -29,7 +29,9 @@ def _get(url: str, timeout: float) -> str:
         return response.read().decode("utf-8", "replace")
 
 
-def scrape(base_url: str, timeout: float = 10.0, model_name: str = "") -> dict[str, float]:
+def scrape(
+    base_url: str, timeout: float = 10.0, model_name: str = ""
+) -> dict[str, float]:
     """Sum every counter/gauge by metric name across labels.
 
     When several models share one endpoint, ``model_name`` keeps only the labels
@@ -85,7 +87,8 @@ def hit_summary(before: dict[str, float], after: dict[str, float]) -> dict:
         "hbm_hit_rate": rate(hbm_h, hbm_q),
         "hbm_hits": hbm_h,
         "hbm_queries": hbm_q,
-        "external_hit_rate": rate(ext_h, ext_q),
+        "external_hit_rate": rate(ext_h, hbm_q),
+        "external_hit_rate_remaining": rate(ext_h, ext_q),
         "external_hits": ext_h,
         "external_queries": ext_q,
         "ucm_load_bytes": load_bytes,
@@ -127,7 +130,9 @@ def reset_prefix_cache(
                 status = response.status
                 body = response.read().decode("utf-8", "replace").strip()
         except urllib.error.HTTPError as exc:
-            raise ResetError(f"reset returned HTTP {exc.code}: {exc.read()[:200]!r}") from exc
+            raise ResetError(
+                f"reset returned HTTP {exc.code}: {exc.read()[:200]!r}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise ResetError(f"reset request failed: {exc}") from exc
 
@@ -150,5 +155,7 @@ def reset_prefix_cache(
         if success:
             return {"success": True, "attempts": attempts, "body": body}
         if time.time() >= deadline:
-            raise ResetError(f"reset still failing after {attempts} attempts ({timeout_s:.0f}s)")
+            raise ResetError(
+                f"reset still failing after {attempts} attempts ({timeout_s:.0f}s)"
+            )
         time.sleep(interval_s)

@@ -24,7 +24,11 @@
       "num_requests": 16
     }
   ],
-  "modes": ["hbm", "cache", "posix-reset"],
+  "modes": [
+    "hbm",
+    "cache",
+    "posix-reset"
+  ],
   "block_tokens": 128,
   "warmup": {
     "enabled": true,
@@ -32,19 +36,20 @@
     "output_len": 1,
     "hit_rate": 0.9,
     "concurrency": 4,
-    "num_requests": 4
+    "num_requests": 4,
+    "rounds": 1
   },
-  "corpus_path": "assets/corpus.txt",
+  "corpus_path": "/data/datasets/GSM8K.jsonl",
   "work_dir": "work",
   "results_dir": "results",
-  "seed_settle_seconds": 10,
+  "seed_settle_seconds": 1,
   "reset": {
     "timeout_seconds": 60,
-    "retry_interval_seconds": 5
+    "retry_interval_seconds": 1
   },
   "metrics": {
-    "enabled": true,
-    "settle_seconds": 2,
+    "enabled": false,
+    "settle_seconds": 1,
     "timeout_seconds": 10
   },
   "aisbench": {
