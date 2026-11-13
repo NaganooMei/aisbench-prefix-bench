@@ -75,10 +75,10 @@ reset 严格检查布尔返回值。空 HTTP 200、非法响应或超时会结�
 
 ## 结果
 
-每个 mode 完成后输出终端表格和 `summary.csv`、`summary.xlsx`，包含模型、月日时分、TTFT、TPOT、输入/输出/总吞吐、估算 Prefill 吞吐、HBM/External hit、Host Ready 和 Posix bytes。
+每个 mode 完成后输出终端表格和 `summary.csv`、`summary.xlsx`，包含模型、月日时分、TTFT、TPOT、输入/输出/总吞吐、HBM/External hit、Host Ready 和 Posix bytes。
 
 - 输入吞吐按总吞吐减输出吞吐计算。
-- 估算 Prefill 吞吐按成功请求的输入 token 总数除以 TTFT 总和计算，AISBench 用平均 TTFT 乘成功请求数估算分母。它包含缓存输入、排队和加载耗时。
+- Prefill 吞吐使用 AISBench 原生性能报告中的 `PrefillTokenThroughput`。
 - HBM hit 与 External hit 都除以 HBM queried tokens。`external_hit_rate_remaining` 另存扣除 HBM 后的外部命中口径。
 - 默认读取正式组前后的 `/metrics` 计算命中率，缺指标显示 `n/a`。`--collect-metrics` 额外导出原始快照、按 rank 的 CSV/Excel、直方图和耗时统计，采集失败按错误处理。
 

@@ -40,7 +40,6 @@ FIELDS = (
     "ttft_p99_ms",
     "tpot_mean_ms",
     "duration_s",
-    "prefill_tokens_per_s_estimated",
     "input_tokens_per_s",
     "output_tokens_per_s",
     "total_tokens_per_s",
@@ -62,10 +61,6 @@ DEFINITIONS = (
     (
         "TPOT mean ms",
         "Mean per-request time per output token after the first token, in milliseconds.",
-    ),
-    (
-        "Prefill tokens/s (estimated)",
-        "Successful input tokens / sum of successful request TTFTs in seconds. Includes cached input tokens and TTFT queue/load time. This is a per-request aggregate estimate, not concurrent Prefill wall-clock throughput.",
     ),
     (
         "Input tokens/s",
@@ -128,25 +123,6 @@ def performance(result: dict) -> dict:
         if length > 1
     ]
     inputs = result.get("input_lens", [])
-    successful_ttfts = ttfts
-    if len(lengths) == len(ttfts):
-        successful_ttfts = [ttft for ttft, length in zip(ttfts, lengths) if length > 0]
-    elif result.get("failed", 0):
-        successful_ttfts = []
-    total_input = result.get("total_input_tokens")
-    if total_input is None and inputs:
-        if len(inputs) == len(lengths):
-            total_input = sum(
-                tokens for tokens, length in zip(inputs, lengths) if length > 0
-            )
-        elif not result.get("failed", 0):
-            total_input = sum(inputs)
-    ttft_seconds = sum(successful_ttfts)
-    if not ttfts and result.get("mean_ttft_ms") is not None:
-        ttft_seconds = result["mean_ttft_ms"] * result.get("completed", 0) / 1000
-    prefill_estimate = None
-    if total_input is not None and ttft_seconds > 0 and math.isfinite(ttft_seconds):
-        prefill_estimate = total_input / ttft_seconds
     output_throughput = result.get("output_throughput")
     total_throughput = result.get("total_token_throughput")
     input_throughput = (
@@ -172,7 +148,6 @@ def performance(result: dict) -> dict:
             statistics.mean(tpots) * 1000 if tpots else result.get("mean_tpot_ms")
         ),
         "duration_s": result.get("duration"),
-        "prefill_tokens_per_s_estimated": prefill_estimate,
         "input_tokens_per_s": input_throughput,
         "output_tokens_per_s": output_throughput,
         "total_tokens_per_s": total_throughput,
@@ -337,7 +312,6 @@ def write_summary(directory: Path, results: list[dict] | None = None) -> list[di
             field
             for field in (
                 "tpot_mean_ms",
-                "prefill_tokens_per_s_estimated",
                 "input_tokens_per_s",
                 "output_tokens_per_s",
                 "total_tokens_per_s",
@@ -377,7 +351,6 @@ def write_summary(directory: Path, results: list[dict] | None = None) -> list[di
         "Posix bytes",
         "TTFT ms",
         "TPOT ms",
-        "Prefill est tok/s",
         "Input tok/s",
         "Output tok/s",
         "Total tok/s",
@@ -388,7 +361,6 @@ def write_summary(directory: Path, results: list[dict] | None = None) -> list[di
     for result in results:
         ttft = result.get("ttft_mean_ms")
         tpot = result.get("tpot_mean_ms")
-        prefill_throughput = result.get("prefill_tokens_per_s_estimated")
         input_throughput = result.get("input_tokens_per_s")
         output_throughput = result.get("output_tokens_per_s")
         total_throughput = result.get("total_tokens_per_s")
@@ -414,11 +386,6 @@ def write_summary(directory: Path, results: list[dict] | None = None) -> list[di
                 f"{posix_bytes:,.0f}" if posix_bytes is not None else "n/a",
                 f"{ttft:.2f}" if ttft is not None else "n/a",
                 f"{tpot:.2f}" if tpot is not None else "n/a",
-                (
-                    f"{prefill_throughput:.2f}"
-                    if prefill_throughput is not None
-                    else "n/a"
-                ),
                 f"{input_throughput:.2f}" if input_throughput is not None else "n/a",
                 f"{output_throughput:.2f}" if output_throughput is not None else "n/a",
                 f"{total_throughput:.2f}" if total_throughput is not None else "n/a",

@@ -225,10 +225,23 @@ class WorkflowTests(unittest.TestCase):
                     )
                 row = results[0]
                 self.assertEqual(row.perf["input_tokens_per_s"], 4 * 8192)
-                self.assertAlmostEqual(
-                    row.perf["prefill_tokens_per_s_estimated"], 8192 / 0.1
-                )
+                self.assertNotIn("prefill_tokens_per_s_estimated", row.perf)
         self.assertTrue((Path(self.config.results_dir) / "summary.xlsx").exists())
+        self.assertNotIn(
+            "prefill_tokens_per_s_estimated",
+            (Path(self.config.results_dir) / "summary.csv").read_text(
+                encoding="utf-8-sig"
+            ),
+        )
+        import zipfile
+
+        with zipfile.ZipFile(
+            Path(self.config.results_dir) / "summary.xlsx"
+        ) as workbook:
+            self.assertNotIn(
+                "prefill_tokens_per_s_estimated",
+                workbook.read("xl/worksheets/sheet1.xml").decode(),
+            )
 
     def test_posix_restart_replays_saved_data_and_seeds_without_tokenizer(self):
         self.run_mode("posix-seed")
